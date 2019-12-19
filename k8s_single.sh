@@ -1,29 +1,35 @@
 #!/bin/bash
 
-cat >self_centos7.repo <<EOF
+log_file=/var/log/k8s.log
+echo "begin install `date`" >> ${log_file}
+echo "begin config yum repo... `date`" >> ${log_file}
+mv /etc/yum.repos.d /etc/yum.repos.d.bak
+mkdir /etc/yum.repos.d
+cp CentOS-Base.repo /etc/yum.repos.d/
+cat >/etc/yum.repos.d/self_centos7.repo <<EOF
 [centos7]
 name=centos7 Repo
-baseurl=http://172.29.115.113:8081/repository/yum/$releasever/os/$basearch
+baseurl=http://172.29.115.113:8081/repository/yum/\$releasever/os/\$basearch
 gpgcheck=0
 enable=1
 EOF
 
-cat >self_kubernetes.repo <<EOF
+cat >/etc/yum.repos.d/self_kubernetes.repo <<EOF
 [kubernetes]
 name=Kubernetes Repo
-baseurl=http://172.29.115.113:8081/repository/yum
+baseurl=http://172.29.115.113:8081/repository/yum/kubernetes/yum/repos/kubernetes-el7-x86_64/
 gpgcheck=0
 enable=1
 EOF
-cat >self_docker_ce.repo <<EOF
+cat >/etc/yum.repos.d/self_docker_ce.repo <<EOF
 [docker-ce-stable]
 name=Docker CE Stable - $basearch
-baseurl=http://172.29.115.113:8081/repository/yum
+baseurl=http://172.29.115.113:8081/repository/yum/docker-ce/linux/centos/7/\$basearch/stable
 enabled=1
 gpgcheck=0
 EOF
 
-
+echo "begin prerequire `date`" >> ${log_file}
 #hostname
 # 修改 hostname
 #hostnamectl set-hostname your-new-host-name
@@ -54,24 +60,26 @@ sysctl -p
 
 
 
-
+echo "begin uninstall docker `date`" >> ${log_file}
 yum remove -y docker  docker-common docker-selinux docker-engine 
 yum install -y yum-utils device-mapper-persistent-data lvm2
 yum install -y docker-ce-19.03.5
 systemctl enable docker
-systemctl start docker
+systemctl restart docker
 gpasswd -a clouder docker
-newgrp docker
+#newgrp docker
 
-cat << END >/etc/docker/daemon.json
+cat <<EOF >/etc/docker/daemon.json
 {
-  "insecure-registries":["172.29.115.113:8082],
+  "insecure-registries":["172.29.115.113:8082"],
   "registry-mirrors": ["http://172.29.115.113:8082"],
   "exec-opts":["native.cgroupdriver=systemd"]
 }
+EOF
+echo "begin restart docker `date`" >> ${log_file}
 systemctl daemon-reload
 systemctl restart docker
-
+echo "begin install k8s `date`" >> ${log_file}
 kubetool_ver=1.17.0
 yum install -y kubeadm-${kubetool_ver}  kubelet-${kubetool_ver} kubectl-${kubetool_ver}
 systemctl enable kubelet.service
@@ -80,6 +88,7 @@ cat >/etc/sysconfig/kubelet <<EOF
 KUBELET_EXTRA_ARGS="--fail-swap-on=false --feature-gates SupportPodPidsLimit=false --feature-gates SupportNodePidsLimit=false"
 EOF
 
+echo "begin pull images of k8s `date`" >> ${log_file}
 kubernetes_ver=v1.17.0
 
 docker pull google_containers/kube-apiserver-amd64:v1.17.0
@@ -105,29 +114,35 @@ docker rmi google_containers/kube-proxy-amd64:v1.17.0
 docker rmi google_containers/pause:3.1
 docker rmi google_containers/etcd-amd64:3.4.3-0
 docker rmi coredns/coredns:1.6.5
-
+echo "begin kubeadm init `date`" >> ${log_file}
 kubeadm init --pod-network-cidr=192.168.0.0/16 --kubernetes-version=v1.17.0 --ignore-preflight-errors=Swap --upload-certs
 mkdir -p $HOME/.kube
-cp  /etc/kubernetes/admin.conf $HOME/.kube/config
+cp -f /etc/kubernetes/admin.conf $HOME/.kube/config
 chown $(id -u):$(id -g) $HOME/.kube/config
 
 mkdir -p /home/clouder/.kube
-cp  /etc/kubernetes/admin.conf /home/clouder/.kube/config
+cp -f /etc/kubernetes/admin.conf /home/clouder/.kube/config
 chown -R clouder:clouder /home/clouder/.kube
-
+kubectl taint nodes --all node-role.kubernetes.io/master-
+echo "begin pull images of calico `date`" >> ${log_file}
 #calico
 calico/cni:v3.8.5
 calico/pod2daemon-flexvol:v3.8.5
 calico/node:v3.8.5
 calico/kube-controllers:v3.8.5
 #wget  https://docs.projectcalico.org/v3.8/manifests/calico.yaml
+echo "begin apply calico `date`" >> ${log_file}
 kubectl apply -f calico.yaml 
 
+echo "begin pull images of ingress-nginx `date`" >> ${log_file}
 #ingress-nginx
 docker pull kubernetes-ingress-controller/nginx-ingress-controller:0.26.1
 docker tag kubernetes-ingress-controller/nginx-ingress-controller:0.26.1 quay.io/kubernetes-ingress-controller/nginx-ingress-controller:0.26.1
 docker rmi kubernetes-ingress-controller/nginx-ingress-controller:0.26.1
 #ingerss nodeport
 #https://github.com/kubernetes/ingress-nginx/blob/nginx-0.26.1/deploy/static/mandatory.yaml
+echo "begin apply ingress-nginx `date`" >> ${log_file}
 kubectl apply -f ingress-service-nodeport.yaml
-
+echo "end install `date`" >> ${log_file}
+kubectl get pod --all-namespaces
+newgrp docker
