@@ -126,10 +126,10 @@ chown -R clouder:clouder /home/clouder/.kube
 kubectl taint nodes --all node-role.kubernetes.io/master-
 echo "begin pull images of calico `date`" >> ${log_file}
 #calico
-calico/cni:v3.8.5
-calico/pod2daemon-flexvol:v3.8.5
-calico/node:v3.8.5
-calico/kube-controllers:v3.8.5
+docker pull calico/cni:v3.8.5
+docker pull calico/pod2daemon-flexvol:v3.8.5
+docker pull calico/node:v3.8.5
+docker pull calico/kube-controllers:v3.8.5
 #wget  https://docs.projectcalico.org/v3.8/manifests/calico.yaml
 echo "begin apply calico `date`" >> ${log_file}
 kubectl apply -f calico.yaml 
@@ -142,6 +142,7 @@ docker rmi kubernetes-ingress-controller/nginx-ingress-controller:0.26.1
 #ingerss nodeport
 #https://github.com/kubernetes/ingress-nginx/blob/nginx-0.26.1/deploy/static/mandatory.yaml
 echo "begin apply ingress-nginx `date`" >> ${log_file}
+kubectl apply -f mandatory.yaml
 kubectl apply -f ingress-service-nodeport.yaml
 echo "end install `date`" >> ${log_file}
 kubectl get pod --all-namespaces
