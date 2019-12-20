@@ -1,6 +1,7 @@
 #!/bin/bash
 
 log_file=/var/log/k8s.log
+nexus_server=172.29.115.113
 echo "begin install `date`" >> ${log_file}
 echo "begin config yum repo... `date`" >> ${log_file}
 mv /etc/yum.repos.d /etc/yum.repos.d.bak
@@ -9,7 +10,7 @@ cp CentOS-Base.repo /etc/yum.repos.d/
 cat >/etc/yum.repos.d/self_centos7.repo <<EOF
 [centos7]
 name=centos7 Repo
-baseurl=http://172.29.115.113:8081/repository/yum/\$releasever/os/\$basearch
+baseurl=http://${nexus_server}:8081/repository/yum/\$releasever/os/\$basearch
 gpgcheck=0
 enable=1
 EOF
@@ -17,14 +18,14 @@ EOF
 cat >/etc/yum.repos.d/self_kubernetes.repo <<EOF
 [kubernetes]
 name=Kubernetes Repo
-baseurl=http://172.29.115.113:8081/repository/yum/kubernetes/yum/repos/kubernetes-el7-x86_64/
+baseurl=http://${nexus_server}:8081/repository/yum/kubernetes/yum/repos/kubernetes-el7-x86_64/
 gpgcheck=0
 enable=1
 EOF
 cat >/etc/yum.repos.d/self_docker_ce.repo <<EOF
 [docker-ce-stable]
 name=Docker CE Stable - $basearch
-baseurl=http://172.29.115.113:8081/repository/yum/docker-ce/linux/centos/7/\$basearch/stable
+baseurl=http://${nexus_server}:8081/repository/yum/docker-ce/linux/centos/7/\$basearch/stable
 enabled=1
 gpgcheck=0
 EOF
@@ -71,8 +72,8 @@ gpasswd -a clouder docker
 
 cat <<EOF >/etc/docker/daemon.json
 {
-  "insecure-registries":["172.29.115.113:8082"],
-  "registry-mirrors": ["http://172.29.115.113:8082"],
+  "insecure-registries":["${nexus_server}:8082"],
+  "registry-mirrors": ["http://${nexus_server}:8082"],
   "exec-opts":["native.cgroupdriver=systemd"]
 }
 EOF
