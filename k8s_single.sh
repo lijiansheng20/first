@@ -143,7 +143,8 @@ docker rmi kubernetes-ingress-controller/nginx-ingress-controller:0.26.1
 #https://github.com/kubernetes/ingress-nginx/blob/nginx-0.26.1/deploy/static/mandatory.yaml
 echo "begin apply ingress-nginx `date`" >> ${log_file}
 kubectl apply -f mandatory.yaml
-kubectl apply -f ingress-service-nodeport.yaml
+#kubectl apply -f ingress-service-nodeport.yaml
+kubectl apply -f ingress-service-normal.yaml
 echo "end install `date`" >> ${log_file}
 kubectl get pod --all-namespaces
 newgrp docker
