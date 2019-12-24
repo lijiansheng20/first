@@ -1,0 +1,857 @@
+# 配置MariaDB
+apiVersion: v1
+kind: ConfigMap
+metadata:
+    name: mariadb-config
+data:
+    charset.cnf: |
+    [client]
+    default-character-set = utf8mb4
+    [mysqld]
+    character-set-server  = utf8mb4
+    collation-server      = utf8mb4_general_ci
+---
+# 配置Redis
+apiVersion: v1
+kind: ConfigMap
+metadata:
+    name: redis-config
+data:
+    charset.cnf: |
+    protected-mode no
+    daemonize      no
+    logfile        "log"
+    dbfilename     "dump.rdb"
+    dir            "/data"
+---
+# 部署MariaDB
+apiVersion: apps/v1
+kind: Deployment
+metadata:  
+  labels:
+    app: mariadb
+  name: mariadb
+spec:  
+  replicas: 1  
+  selector:
+    matchLabels:
+      app: mariadb
+  template:
+    metadata:      
+      labels:
+        app: mariadb
+    spec:
+      containers:
+      - image: mariadb:10.4.10
+        imagePullPolicy: IfNotPresent
+        name: mariadb
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          value: "1234"
+        - name: TZ
+          value: Asia/Shanghai
+        ports:
+        - name: socket
+          containerPort: 3306
+        volumeMounts:
+        - mountPath: /etc/mysql/mariadb.conf.d
+          name: mariadb-config
+        - mountPath: /var/lib/mysql
+          name: gi-mariadb-data
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - "-c"
+            - MYSQL_PWD="${MYSQL_ROOT_PASSWORD}"
+            - mysql -h 127.0.0.1 -u root -e "SELECT 1"
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3        
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - "-c"
+            - MYSQL_PWD="${MYSQL_ROOT_PASSWORD}"
+            - mysql -h 127.0.0.1 -u root -e "SELECT 1"
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+      volumes:
+      - name: mariadb-config
+        configMap: 
+          name: mariadb-config
+      - name: gi-mariadb-data
+          persistentVolumeClaim:
+            claimName: pvc-gi-mariadb-data
+---
+# 部署RabbitMQ
+apiVersion: apps/v1
+kind: Deployment
+metadata:  
+  labels:
+    app: rabbitmq
+  name: rabbitmq
+spec:  
+  replicas: 1  
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:      
+      labels:
+        app: rabbitmq
+    spec:
+      initContainers:
+      - name: wait-redis
+        image: busybox
+        command: ["sh","-c","until nslookup redis; do echo waiting for redis; sleep 3; done;"]
+      containers:
+      - image: rabbitmq:3.8.1
+        imagePullPolicy: IfNotPresent
+        name: rabbitmq
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        ports:
+        - name: socket1
+          containerPort: 4369
+        - name: socket2
+          containerPort: 5671 
+        - name: socket3
+          containerPort: 5672 
+        - name: socket4
+          containerPort: 15672 
+        - name: socket5
+          containerPort: 25672 
+        volumeMounts:
+        - mountPath: /var/lib/rabbitmq
+          name: gi-rabbitmq-data
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - "-c"
+            - rabbitmqctl status
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3        
+        readinessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - "-c"
+            - rabbitmqctl status
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3  
+      volumes:
+      - name: gi-rabbitmq-data
+          persistentVolumeClaim:
+            claimName: pvc-gi-rabbitmq-data
+---
+# 部署Redis
+apiVersion: apps/v1
+kind: Deployment
+metadata:  
+  labels:
+    app: redis
+  name: redis
+spec:  
+  replicas: 1  
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:      
+      labels:
+        app: redis
+    spec:
+      initContainers:
+      - name: wait-mariadb
+        image: busybox
+        command: ["sh","-c","until nslookup mariadb; do echo waiting for mariadb; sleep 3; done;"]
+      containers:
+      - image: redis:5.0.7
+        imagePullPolicy: IfNotPresent
+        command: ["sh","-c","redis-server /etc/redis/redis.conf"]
+        name: redis
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        ports:
+        - name: socket1
+          containerPort: 6379        
+        volumeMounts:
+        - mountPath: /etc/redis
+          name: redis-config
+        - mountPath: /var/lib/redis
+          name: gi-redis-data
+        livenessProbe:
+          tcpSocket:
+            port: 6379
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3        
+        readinessProbe:
+          tcpSocket:
+            port: 6379
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3  
+      volumes:
+      - name: redis-config
+        configMap: 
+          name: redis-config
+      - name: gi-redis-data
+          persistentVolumeClaim:
+            claimName: pvc-gi-redis-data
+---
+# 部署ZipKin
+apiVersion: apps/v1
+kind: Deployment
+metadata:  
+  labels:
+    app: zipkin
+  name: zipkin
+spec:  
+  replicas: 1  
+  selector:
+    matchLabels:
+      app: zipkin
+  template:
+    metadata:      
+      labels:
+        app: zipkin
+    spec:
+      containers:
+      - image: openzipkin/zipkin:2.19.2
+        imagePullPolicy: IfNotPresent
+        name: zipkin
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        ports:
+        - name: socket1
+          containerPort: 9411                      
+        livenessProbe:
+          tcpSocket:
+            port: 9411
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3        
+        readinessProbe:
+          tcpSocket:
+            port: 9411
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3  
+---
+# 部署registry-center
+apiVersion: apps/v1
+kind: Deployment
+metadata:  
+  labels:
+    app: registry-center
+  name: registry-center
+spec:  
+  replicas: 1  
+  selector:
+    matchLabels:
+      app: registry-center
+  template:
+    metadata:      
+      labels:
+        app: registry-center
+    spec:
+      initContainers:
+      - name: wait-rabbitmq
+        image: busybox
+        command: ["sh","-c","until nslookup rabbitmq; do echo waiting for rabbitmq; sleep 3; done;"]
+      containers:
+      - image: registry.pillar.onecloud.cn:30000/registry-center:0.1
+        imagePullPolicy: IfNotPresent
+        name: registry-center
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        ports:
+        - name: socket1
+          containerPort: 8761                      
+        livenessProbe:
+          tcpSocket:
+            port: 8761
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3        
+        readinessProbe:
+          tcpSocket:
+            port: 8761
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3  
+---
+# 部署config-center
+apiVersion: apps/v1
+kind: Deployment
+metadata:  
+  labels:
+    app: config-center
+  name: config-center
+spec:  
+  replicas: 1  
+  selector:
+    matchLabels:
+      app: config-center
+  template:
+    metadata:      
+      labels:
+        app: config-center
+    spec:
+      initContainers:
+      - name: wait-registry-center
+        image: busybox
+        command: ["sh","-c","until nslookup registry-center; do echo waiting for registry-center; sleep 3; done;"]
+      containers:
+      - image: registry.pillar.onecloud.cn:30000/config-center:0.1
+        imagePullPolicy: IfNotPresent
+        name: config-center
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        ports:
+        - name: http
+          containerPort: 21001                      
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 21001
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3        
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 21001
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3  
+---
+# 部署message-sms
+apiVersion: apps/v1
+kind: Deployment
+metadata:  
+  labels:
+    app: message-sms
+  name: message-sms
+spec:  
+  replicas: 1  
+  selector:
+    matchLabels:
+      app: message-sms
+  template:
+    metadata:      
+      labels:
+        app: message-sms
+    spec:
+      initContainers:
+      - name: wait-config-center
+        image: busybox
+        command: ["sh","-c","until nslookup config-center; do echo waiting for config-center; sleep 3; done;"]
+      containers:
+      - image: registry.pillar.onecloud.cn:30000/message-sms:0.1
+        imagePullPolicy: IfNotPresent
+        name: message-sms
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        ports:
+        - name: http
+          containerPort: 22002                      
+        livenessProbe:
+          tcpSocket:
+            port: 22002
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3        
+        readinessProbe:
+          tcpSocket:
+            port: 22002
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3  
+---
+# 部署message-mail
+apiVersion: apps/v1
+kind: Deployment
+metadata:  
+  labels:
+    app: message-mail
+  name: message-mail
+spec:  
+  replicas: 1  
+  selector:
+    matchLabels:
+      app: message-mail
+  template:
+    metadata:      
+      labels:
+        app: message-mail
+    spec:
+      initContainers:
+      - name: wait-config-center
+        image: busybox
+        command: ["sh","-c","until nslookup config-center; do echo waiting for config-center; sleep 3; done;"]
+      containers:
+      - image: registry.pillar.onecloud.cn:30000/message-mail:0.1
+        imagePullPolicy: IfNotPresent
+        name: message-mail
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        ports:
+        - name: http
+          containerPort: 22001                      
+        livenessProbe:
+          tcpSocket:
+            port: 22001
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3        
+        readinessProbe:
+          tcpSocket:
+            port: 22001
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3  
+---
+# 部署payment-center
+apiVersion: apps/v1
+kind: Deployment
+metadata:  
+  labels:
+    app: payment-center
+  name: payment-center
+spec:  
+  replicas: 1  
+  selector:
+    matchLabels:
+      app: payment-center
+  template:
+    metadata:      
+      labels:
+        app: payment-center
+    spec:
+      initContainers:
+      - name: wait-config-center
+        image: busybox
+        command: ["sh","-c","until nslookup config-center; do echo waiting for config-center; sleep 3; done;"]
+      containers:
+      - image: registry.pillar.onecloud.cn:30000/payment-center:0.1
+        imagePullPolicy: IfNotPresent
+        name: payment-center
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        ports:
+        - name: http
+          containerPort: 20003                      
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 20003
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3        
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 20003
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3  
+---
+# 部署authorization-center
+apiVersion: apps/v1
+kind: Deployment
+metadata:  
+  labels:
+    app: authorization-center
+  name: authorization-center
+spec:  
+  replicas: 1  
+  selector:
+    matchLabels:
+      app: authorization-center
+  template:
+    metadata:      
+      labels:
+        app: authorization-center
+    spec:
+      initContainers:
+      - name: wait-config-center
+        image: busybox
+        command: ["sh","-c","until nslookup config-center; do echo waiting for config-center; sleep 3; done;"]
+      containers:
+      - image: registry.pillar.onecloud.cn:30000/authorization-center:0.1
+        imagePullPolicy: IfNotPresent
+        name: payment-center
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        ports:
+        - name: http
+          containerPort: 20002                      
+        livenessProbe:
+          httpGet:
+            path: /login
+            port: 20002
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3        
+        readinessProbe:
+          httpGet:
+            path: /login
+            port: 20002
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3  
+---
+# 部署api-gateway
+apiVersion: apps/v1
+kind: Deployment
+metadata:  
+  labels:
+    app: api-gateway
+  name: api-gateway
+spec:  
+  replicas: 1  
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:      
+      labels:
+        app: api-gateway
+    spec:
+      initContainers:
+      - name: wait-authorization-center
+        image: busybox
+        command: ["sh","-c","until nslookup authorization-center; do echo waiting for authorization-center; sleep 3; done;"]
+      containers:
+      - image: registry.pillar.onecloud.cn:30000/api-gateway:0.1
+        imagePullPolicy: IfNotPresent
+        name: api-gateway
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        ports:
+        - name: http
+          containerPort: 20001                      
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 20001
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3        
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 20001
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3  
+---
+# 部署config-center-web
+apiVersion: apps/v1
+kind: Deployment
+metadata:  
+  labels:
+    app: config-center-web
+  name: config-center-web
+spec:  
+  replicas: 1  
+  selector:
+    matchLabels:
+      app: config-center-web
+  template:
+    metadata:      
+      labels:
+        app: config-center-web
+    spec:
+      initContainers:
+      - name: wait-api-gateway
+        image: busybox
+        command: ["sh","-c","until nslookup api-gateway; do echo waiting for api-gateway; sleep 3; done;"]
+      containers:
+      - image: registry.pillar.onecloud.cn:30000/config-center-web:0.1
+        imagePullPolicy: IfNotPresent
+        name: config-center-web
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        ports:
+        - name: http
+          containerPort: 80                      
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3        
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3  
+---
+# 部署message-mail-web
+apiVersion: apps/v1
+kind: Deployment
+metadata:  
+  labels:
+    app: message-mail-web
+  name: message-mail-web
+spec:  
+  replicas: 1  
+  selector:
+    matchLabels:
+      app: message-mail-web
+  template:
+    metadata:      
+      labels:
+        app: message-mail-web
+    spec:
+      initContainers:
+      - name: wait-api-gateway
+        image: busybox
+        command: ["sh","-c","until nslookup api-gateway; do echo waiting for api-gateway; sleep 3; done;"]
+      containers:
+      - image: registry.pillar.onecloud.cn:30000/message-mail-web:0.1
+        imagePullPolicy: IfNotPresent
+        name: message-mail-web
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        ports:
+        - name: http
+          containerPort: 80                      
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3        
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3  
+---
+# 部署message-sms-web
+apiVersion: apps/v1
+kind: Deployment
+metadata:  
+  labels:
+    app: message-sms-web
+  name: message-sms-web
+spec:  
+  replicas: 1  
+  selector:
+    matchLabels:
+      app: message-sms-web
+  template:
+    metadata:      
+      labels:
+        app: message-sms-web
+    spec:
+      initContainers:
+      - name: wait-api-gateway
+        image: busybox
+        command: ["sh","-c","until nslookup api-gateway; do echo waiting for api-gateway; sleep 3; done;"]
+      containers:
+      - image: registry.pillar.onecloud.cn:30000/message-sms-web:0.1
+        imagePullPolicy: IfNotPresent
+        name: message-sms-web
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        ports:
+        - name: http
+          containerPort: 80                      
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3        
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3 
+---
+# 部署payment-center-test
+apiVersion: apps/v1
+kind: Deployment
+metadata:  
+  labels:
+    app: payment-center-test
+  name: payment-center-test
+spec:  
+  replicas: 1  
+  selector:
+    matchLabels:
+      app: payment-center-test
+  template:
+    metadata:      
+      labels:
+        app: payment-center-test
+    spec:
+      initContainers:
+      - name: wait-api-gateway
+        image: busybox
+        command: ["sh","-c","until nslookup api-gateway; do echo waiting for api-gateway; sleep 3; done;"]
+      containers:
+      - image: registry.pillar.onecloud.cn:30000/payment-center-test:0.1
+        imagePullPolicy: IfNotPresent
+        name: payment-center-test
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        ports:
+        - name: http
+          containerPort: 80                      
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3        
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3 
+---
+# 部署payment-center-web
+apiVersion: apps/v1
+kind: Deployment
+metadata:  
+  labels:
+    app: payment-center-web
+  name: payment-center-web
+spec:  
+  replicas: 1  
+  selector:
+    matchLabels:
+      app: payment-center-web
+  template:
+    metadata:      
+      labels:
+        app: payment-center-web
+    spec:
+      initContainers:
+      - name: wait-api-gateway
+        image: busybox
+        command: ["sh","-c","until nslookup api-gateway; do echo waiting for api-gateway; sleep 3; done;"]
+      containers:
+      - image: registry.pillar.onecloud.cn:30000/payment-center-web:0.1
+        imagePullPolicy: IfNotPresent
+        name: payment-center-web
+        env:
+        - name: TZ
+          value: Asia/Shanghai
+        ports:
+        - name: http
+          containerPort: 80                      
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3        
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3 
